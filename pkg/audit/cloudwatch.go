@@ -2,15 +2,15 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cloudwatchlogstypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/samber/lo"
-	lop "github.com/samber/lo/parallel"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type CloudWatchProvider struct {
@@ -59,56 +59,25 @@ func (p *CloudWatchProvider) Query(ctx context.Context, query string, start, end
 	return *result, nil
 }
 
-type PodEventInfo struct {
-	Name         string
-	CreationTime time.Time
-	BindTime     time.Time
-	EvictionTime time.Time
-	DeletionTime time.Time
-}
-
-func (e PodEventInfo) String() string {
-	return fmt.Sprintf(`
-%s
-%s
-CreationTime: %s
-BindTime: %s
-EvictionTime: %s
-DeletionTime: %s
-`,
-		e.Name,
-		strings.Repeat("-", len(e.Name)),
-		lo.Ternary(e.CreationTime.IsZero(), "N/A", e.CreationTime.String()),
-		lo.Ternary(e.BindTime.IsZero(), "N/A", e.BindTime.String()),
-		lo.Ternary(e.EvictionTime.IsZero(), "N/A", e.EvictionTime.String()),
-		lo.Ternary(e.DeletionTime.IsZero(), "N/A", e.DeletionTime.String()),
-	)
-}
-
-func (p *CloudWatchProvider) Parse(ctx context.Context, start, end time.Duration, podName, namespace string) ([]PodEvent, error) {
+func (p *CloudWatchProvider) GetEvents(ctx context.Context, start, end time.Duration, nn types.NamespacedName) ([]Event, error) {
 	startTime := time.Now().Add(-start)
 	endTime := time.Now().Add(-end)
 
-	res, err := p.Query(ctx, GetPodQuery(podName), startTime, endTime)
+	res, err := p.Query(ctx, GetPodQuery(nn), startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
-	podEventInfo := PodEventInfo{Name: podName}
-	queryResults := toPodQueryResults(res.Results)
-	for _, result := range queryResults {
-		switch {
-		case result.Verb == "create" && strings.Contains(result.RequestURI, "binding"):
-			podEventInfo.BindTime = result.Timestamp
-		case result.Verb == "create" && strings.Contains(result.RequestURI, "eviction"):
-			podEventInfo.EvictionTime = result.Timestamp
-		case result.Verb == "create":
-			podEventInfo.CreationTime = result.Timestamp
-		case result.Verb == "delete":
-			podEventInfo.DeletionTime = result.Timestamp
+	var auditEvents []Event
+	for _, r := range res.Results {
+		for _, field := range r {
+			if *field.Field == "@message" {
+				var auditEvent Event
+				lo.Must0(json.Unmarshal([]byte(*field.Value), &auditEvent))
+				auditEvents = append(auditEvents, auditEvent)
+			}
 		}
 	}
-	fmt.Println(podEventInfo)
-	return nil, nil
+	return auditEvents, nil
 }
 
 type PodQueryResult struct {
@@ -117,30 +86,14 @@ type PodQueryResult struct {
 	Verb       string
 }
 
-func toPodQueryResults(results [][]cloudwatchlogstypes.ResultField) []PodQueryResult {
-	return lop.Map(results, func(res []cloudwatchlogstypes.ResultField, _ int) PodQueryResult {
-		queryResult := PodQueryResult{}
-		for _, field := range res {
-			switch *field.Field {
-			case "@timestamp":
-				queryResult.Timestamp = lo.Must(time.Parse("2006-01-02 15:04:05.999", *field.Value))
-			case "verb":
-				queryResult.Verb = *field.Value
-			case "requestURI":
-				queryResult.RequestURI = *field.Value
-			}
-		}
-		return queryResult
-	})
-}
-
-func GetPodQuery(podName string) string {
+func GetPodQuery(nn types.NamespacedName) string {
 	const podQueryTemplate = `
-fields @timestamp, requestURI, verb
+fields @timestamp, @message
 | filter @logStream like "apiserver"
 | filter verb like /create|delete/
 | filter requestURI like "pods"
 | filter @message like "%s"
+| filter requestURI like "%s"
 `
-	return fmt.Sprintf(podQueryTemplate, podName)
+	return fmt.Sprintf(podQueryTemplate, nn.Name, nn.Namespace)
 }
