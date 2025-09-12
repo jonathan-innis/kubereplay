@@ -2,13 +2,15 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	cloudwatchlogstypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/samber/lo"
+	lop "github.com/samber/lo/parallel"
 )
 
 type CloudWatchProvider struct {
@@ -16,10 +18,13 @@ type CloudWatchProvider struct {
 	logGroupName string
 }
 
-func NewCloudWatchProvider(logGroupName string) (*CloudWatchProvider, error) {
+func NewCloudWatchProvider(logGroupName, region string) (*CloudWatchProvider, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	if region != "" {
+		cfg.Region = region
 	}
 
 	return &CloudWatchProvider{
@@ -28,42 +33,114 @@ func NewCloudWatchProvider(logGroupName string) (*CloudWatchProvider, error) {
 	}, nil
 }
 
-func (p *CloudWatchProvider) Parse(podName, namespace string) ([]PodEvent, error) {
-	endTime := time.Now()
-	startTime := endTime.Add(-24 * time.Hour)
-
-	input := &cloudwatchlogs.FilterLogEventsInput{
-		LogGroupName:  aws.String(p.logGroupName),
-		StartTime:     aws.Int64(startTime.UnixMilli()),
-		EndTime:       aws.Int64(endTime.UnixMilli()),
-		FilterPattern: aws.String(fmt.Sprintf(`{ $.objectRef.name = "%s" && $.objectRef.namespace = "%s" }`, podName, namespace)),
+func (p *CloudWatchProvider) Query(ctx context.Context, query string, start, end time.Time) (cloudwatchlogs.GetQueryResultsOutput, error) {
+	startQuery, err := p.client.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
+		QueryString:         lo.ToPtr(query),
+		StartTime:           lo.ToPtr(start.Unix()),
+		EndTime:             lo.ToPtr(end.Unix()),
+		LogGroupIdentifiers: []string{p.logGroupName},
+	})
+	if err != nil {
+		return cloudwatchlogs.GetQueryResultsOutput{}, err
 	}
-
-	var events []PodEvent
-	paginator := cloudwatchlogs.NewFilterLogEventsPaginator(p.client, input)
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(context.TODO())
+	var result *cloudwatchlogs.GetQueryResultsOutput
+	lo.WaitFor(func(_ int) bool {
+		result, err = p.client.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{
+			QueryId: startQuery.QueryId,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch logs: %w", err)
+			return true
 		}
+		return result.Status == cloudwatchlogstypes.QueryStatusComplete
+	}, time.Minute*5, 500*time.Millisecond)
+	if err != nil {
+		return cloudwatchlogs.GetQueryResultsOutput{}, err
+	}
+	return *result, nil
+}
 
-		for _, logEvent := range output.Events {
-			var auditEvent AuditEvent
-			if err := json.Unmarshal([]byte(*logEvent.Message), &auditEvent); err != nil {
-				continue
-			}
+type PodEventInfo struct {
+	Name         string
+	CreationTime time.Time
+	BindTime     time.Time
+	EvictionTime time.Time
+	DeletionTime time.Time
+}
 
-			if !isPodRelated(auditEvent, podName, namespace) {
-				continue
-			}
+func (e PodEventInfo) String() string {
+	return fmt.Sprintf(`
+%s
+%s
+CreationTime: %s
+BindTime: %s
+EvictionTime: %s
+DeletionTime: %s
+`,
+		e.Name,
+		strings.Repeat("-", len(e.Name)),
+		lo.Ternary(e.CreationTime.IsZero(), "N/A", e.CreationTime.String()),
+		lo.Ternary(e.BindTime.IsZero(), "N/A", e.BindTime.String()),
+		lo.Ternary(e.EvictionTime.IsZero(), "N/A", e.EvictionTime.String()),
+		lo.Ternary(e.DeletionTime.IsZero(), "N/A", e.DeletionTime.String()),
+	)
+}
 
-			podEvent := extractPodEvent(auditEvent)
-			if podEvent != nil {
-				events = append(events, *podEvent)
-			}
+func (p *CloudWatchProvider) Parse(ctx context.Context, start, end time.Duration, podName, namespace string) ([]PodEvent, error) {
+	startTime := time.Now().Add(-start)
+	endTime := time.Now().Add(-end)
+
+	res, err := p.Query(ctx, GetPodQuery(podName), startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	podEventInfo := PodEventInfo{Name: podName}
+	queryResults := toPodQueryResults(res.Results)
+	for _, result := range queryResults {
+		switch {
+		case result.Verb == "create" && strings.Contains(result.RequestURI, "binding"):
+			podEventInfo.BindTime = result.Timestamp
+		case result.Verb == "create" && strings.Contains(result.RequestURI, "eviction"):
+			podEventInfo.EvictionTime = result.Timestamp
+		case result.Verb == "create":
+			podEventInfo.CreationTime = result.Timestamp
+		case result.Verb == "delete":
+			podEventInfo.DeletionTime = result.Timestamp
 		}
 	}
+	fmt.Println(podEventInfo)
+	return nil, nil
+}
 
-	return events, nil
+type PodQueryResult struct {
+	Timestamp  time.Time
+	RequestURI string
+	Verb       string
+}
+
+func toPodQueryResults(results [][]cloudwatchlogstypes.ResultField) []PodQueryResult {
+	return lop.Map(results, func(res []cloudwatchlogstypes.ResultField, _ int) PodQueryResult {
+		queryResult := PodQueryResult{}
+		for _, field := range res {
+			switch *field.Field {
+			case "@timestamp":
+				queryResult.Timestamp = lo.Must(time.Parse("2006-01-02 15:04:05.999", *field.Value))
+			case "verb":
+				queryResult.Verb = *field.Value
+			case "requestURI":
+				queryResult.RequestURI = *field.Value
+			}
+		}
+		return queryResult
+	})
+}
+
+func GetPodQuery(podName string) string {
+	const podQueryTemplate = `
+fields @timestamp, requestURI, verb
+| filter @logStream like "apiserver"
+| filter verb like /create|delete/
+| filter requestURI like "pods"
+| filter @message like "%s"
+`
+	return fmt.Sprintf(podQueryTemplate, podName)
 }

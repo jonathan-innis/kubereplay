@@ -17,7 +17,7 @@ Examples:
   kubereplay get pod my-pod -n default -f /path/to/audit.log
 
   # Parse from AWS CloudWatch Logs
-  kubereplay get pod my-pod -n default -g /aws/eks/cluster-name/audit`,
+  kubereplay get pod my-pod -n default -g /aws/eks/cluster-name/audit -r us-west-2`,
 }
 
 func Execute() error {

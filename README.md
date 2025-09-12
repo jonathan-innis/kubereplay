@@ -15,6 +15,8 @@ kubereplay get <resource> <name> -n <namespace> [flags]
 ### Data sources
 - `--audit-log` or `-f` - Local audit log file path
 - `--log-group` or `-g` - AWS CloudWatch log group name
+- `--region` or `-r` - AWS region for CloudWatch log group
+- `--account` or `-a` - AWS account ID for cross-account access
 
 ### Examples
 
@@ -23,7 +25,10 @@ kubereplay get <resource> <name> -n <namespace> [flags]
 kubereplay get pod my-pod -n kube-system -f /var/log/audit.log
 
 # Get pod events from AWS CloudWatch Logs
-kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit
+kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2
+
+# Get pod events from CloudWatch in different account
+kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2 -a 123456789012
 
 # Get pod events from default namespace
 kubereplay get pod my-pod -n default -f /path/to/audit.log
