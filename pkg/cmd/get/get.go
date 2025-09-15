@@ -33,9 +33,7 @@ Examples:
   kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2`,
 }
 
-func RunGet(ctx context.Context, cmd *cobra.Command, start, end time.Duration, name, namespace, auditLogPath, logGroup, region string) error {
-	nn := types.NamespacedName{Namespace: namespace, Name: name}
-
+func RunGet(ctx context.Context, cmd *cobra.Command, start, end time.Duration, nn types.NamespacedName, auditLogPath, logGroup, region string) error {
 	var err error
 	var auditProvider provider.Provider
 	if logGroup != "" {

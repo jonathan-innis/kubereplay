@@ -35,7 +35,8 @@ type ParsedEvent struct {
 type ObjectType string
 
 const (
-	ObjectTypePod = "Pod"
+	ObjectTypePod  = "Pod"
+	ObjectTypeNode = "Node"
 )
 
 type EventType string
@@ -46,6 +47,8 @@ func ParseEvents(events []auditmodel.Event) []ParsedEvent {
 		switch e.ObjectRef.Resource {
 		case "pods":
 			parser = PodParser{}
+		case "nodes":
+			parser = NodeParser{}
 		}
 		return parser.Extract(e)
 	}), func(pe ParsedEvent, _ int) bool { return lo.IsNotEmpty(pe.NamespaceName) })
@@ -55,6 +58,8 @@ func NewObjectParserFrom(objectType string) ObjectParser {
 	switch objectType {
 	case "pod":
 		return PodParser{}
+	case "node":
+		return NodeParser{}
 	default:
 		panic(fmt.Sprintf("invalid object type: %s", objectType))
 	}

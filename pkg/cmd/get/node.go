@@ -9,10 +9,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-var podCmd = &cobra.Command{
-	Use:   "pod <pod-name>",
-	Short: "Get audit log events for a pod",
-	Long: `Get audit log events for a specific pod from Kubernetes audit logs.
+var nodeCmd = &cobra.Command{
+	Use:   "node <node-name>",
+	Short: "Get audit log events for a node",
+	Long: `Get audit log events for a specific node from Kubernetes audit logs.
 
 Data Sources:
   Use either --audit-log for local files or --log-group for AWS CloudWatch Logs.
@@ -20,17 +20,16 @@ Data Sources:
 
 Examples:
   # Get pod from local audit log
-  kubereplay get pod nginx-pod -n default -f /var/log/audit.log
+  kubereplay get node i-123456789 -f /var/log/audit.log
 
   # Get pod from CloudWatch (requires AWS credentials)
-  kubereplay get pod nginx-pod -n kube-system -g /aws/eks/prod-cluster/audit -r us-west-2
+  kubereplay get node i-123456789 -g /aws/eks/prod-cluster/audit -r us-west-2
 
 Output includes timestamps, event types, descriptions, and node information where applicable.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		name := args[0]
-		namespace, _ := cmd.Flags().GetString("namespace")
 		auditLogPath, _ := cmd.Flags().GetString("audit-log")
 		logGroup, _ := cmd.Flags().GetString("log-group")
 		region, _ := cmd.Flags().GetString("region")
@@ -47,18 +46,17 @@ Output includes timestamps, event types, descriptions, and node information wher
 			return
 		}
 
-		if err := RunGet(ctx, cmd, start, end, types.NamespacedName{Namespace: namespace, Name: name}, auditLogPath, logGroup, region); err != nil {
+		if err := RunGet(ctx, cmd, start, end, types.NamespacedName{Name: name}, auditLogPath, logGroup, region); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 	},
 }
 
 func init() {
-	Cmd.AddCommand(podCmd)
-	podCmd.Flags().StringP("namespace", "n", "default", "Namespace of the pod")
-	podCmd.Flags().StringP("audit-log", "f", "", "Path to audit log file")
-	podCmd.Flags().StringP("log-group", "g", "", "AWS CloudWatch log group name")
-	podCmd.Flags().StringP("region", "r", "", "AWS region for CloudWatch log group")
-	podCmd.Flags().DurationP("start", "", time.Hour*24, "Start time for log parsing in time.Duration string format")
-	podCmd.Flags().DurationP("end", "", 0, "End time for log parsing in time.Duration string format")
+	Cmd.AddCommand(nodeCmd)
+	nodeCmd.Flags().StringP("audit-log", "f", "", "Path to audit log file")
+	nodeCmd.Flags().StringP("log-group", "g", "", "AWS CloudWatch log group name")
+	nodeCmd.Flags().StringP("region", "r", "", "AWS region for CloudWatch log group")
+	nodeCmd.Flags().DurationP("start", "", time.Hour*24, "Start time for log parsing in time.Duration string format")
+	nodeCmd.Flags().DurationP("end", "", 0, "End time for log parsing in time.Duration string format")
 }

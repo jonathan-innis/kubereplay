@@ -32,7 +32,7 @@ type Pod struct {
 	DeletionTime  time.Time
 }
 
-func (e Pod) Describe() string {
+func (p Pod) Describe() string {
 	return fmt.Sprintf(`
 %s
 %s
@@ -47,25 +47,25 @@ Nominations
 ------------
 %s
 `,
-		e.NamespaceName,
-		strings.Repeat("-", len(e.NamespaceName.String())),
-		lo.Ternary(e.NodeName == "", "N/A", e.NodeName),
-		lo.Ternary(e.CreationTime.IsZero(), "N/A", e.CreationTime.UTC().Format(time.RFC3339)),
-		lo.Ternary(e.BindTime.IsZero(), "N/A", e.BindTime.UTC().Format(time.RFC3339)),
-		lo.Ternary(e.EvictionTime.IsZero(), "N/A", e.EvictionTime.UTC().Format(time.RFC3339)),
-		lo.Ternary(e.DeletionTime.IsZero(), "N/A", e.DeletionTime.UTC().Format(time.RFC3339)),
+		p.NamespaceName,
+		strings.Repeat("-", len(p.NamespaceName.String())),
+		lo.Ternary(p.NodeName == "", "N/A", p.NodeName),
+		lo.Ternary(p.CreationTime.IsZero(), "N/A", p.CreationTime.UTC().Format(time.RFC3339)),
+		lo.Ternary(p.BindTime.IsZero(), "N/A", p.BindTime.UTC().Format(time.RFC3339)),
+		lo.Ternary(p.EvictionTime.IsZero(), "N/A", p.EvictionTime.UTC().Format(time.RFC3339)),
+		lo.Ternary(p.DeletionTime.IsZero(), "N/A", p.DeletionTime.UTC().Format(time.RFC3339)),
 		"<fill-in-nominations-here>",
 	)
 }
 
-func (e Pod) Get() string {
-	return string(lo.Must(yaml.Marshal(e.Pod)))
+func (p Pod) Get() string {
+	return string(lo.Must(yaml.Marshal(p.Pod)))
 }
 
 type PodParser struct{}
 
 func (PodParser) Coalesce(nn types.NamespacedName, events []ParsedEvent) Object {
-	pd := Pod{NamespaceName: nn}
+	p := Pod{NamespaceName: nn}
 	lop.ForEach(events, func(e ParsedEvent, _ int) {
 		if e.ObjectType != ObjectTypePod {
 			return
@@ -75,18 +75,18 @@ func (PodParser) Coalesce(nn types.NamespacedName, events []ParsedEvent) Object 
 		}
 		switch e.Event {
 		case EventTypePodCreated:
-			pd.CreationTime = e.Timestamp
-			pd.Pod = e.Object.(*v1.Pod)
+			p.CreationTime = e.Timestamp
+			p.Pod = e.Object.(*v1.Pod)
 		case EventTypePodBound:
-			pd.BindTime = e.Timestamp
-			pd.NodeName = e.AdditionalProperties["NodeName"]
+			p.BindTime = e.Timestamp
+			p.NodeName = e.AdditionalProperties["NodeName"]
 		case EventTypePodEvicted:
-			pd.EvictionTime = e.Timestamp
+			p.EvictionTime = e.Timestamp
 		case EventTypePodDeleted:
-			pd.DeletionTime = e.Timestamp
+			p.DeletionTime = e.Timestamp
 		}
 	})
-	return pd
+	return p
 }
 
 func (PodParser) Extract(event auditmodel.Event) ParsedEvent {
@@ -119,7 +119,7 @@ func (PodParser) Extract(event auditmodel.Event) ParsedEvent {
 	return pe
 }
 
-func (e PodParser) DescribeQuery(nn types.NamespacedName) string {
+func (PodParser) DescribeQuery(nn types.NamespacedName) string {
 	podQueryTemplate := `
 fields @timestamp, @message
 | filter @logStream like "apiserver"
@@ -131,7 +131,7 @@ fields @timestamp, @message
 	return fmt.Sprintf(podQueryTemplate, nn.Name, nn.Namespace)
 }
 
-func (e PodParser) GetQuery(nn types.NamespacedName) string {
+func (PodParser) GetQuery(nn types.NamespacedName) string {
 	podQueryTemplate := `
 fields @timestamp, @message
 | filter @logStream like "apiserver"

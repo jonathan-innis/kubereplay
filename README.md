@@ -4,40 +4,50 @@ A kubectl CLI plugin that extracts relevant state information for Kubernetes obj
 
 ## Usage
 
+### Commands
+- `get` - Get Kubernetes resources from audit log events
+- `describe` - Describe audit log events for Kubernetes resources
+
 ### Basic syntax
 ```bash
-kubereplay get <resource> <name> -n <namespace> [flags]
+kubereplay get <resource> <name> [flags]
+kubereplay describe <resource> <name> [flags]
 ```
 
 ### Supported resources
-- `pod` - Get events for a specific pod
+- `pod` - Get/describe events for a specific pod
+- `node` - Get/describe events for a specific node
 
 ### Data sources
 - `--audit-log` or `-f` - Local audit log file path
 - `--log-group` or `-g` - AWS CloudWatch log group name
 - `--region` or `-r` - AWS region for CloudWatch log group
-- `--account` or `-a` - AWS account ID for cross-account access
+- `--start` - Start time for log parsing (duration format, default: 24h)
+- `--end` - End time for log parsing (duration format, default: 0)
 
 ### Examples
 
 ```bash
-# Get pod events from local audit log file
+# Get pod YAML from local audit log file
 kubereplay get pod my-pod -n kube-system -f /var/log/audit.log
 
-# Get pod events from AWS CloudWatch Logs
+# Get pod YAML from AWS CloudWatch Logs
 kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2
 
-# Get pod events from CloudWatch in different account
-kubereplay get pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2 -a 123456789012
+# Get node YAML from audit logs
+kubereplay get node i-0871709ffb35ae35b -g /aws/eks/cluster-name/audit
 
-# Get pod events from default namespace
-kubereplay get pod my-pod -n default -f /path/to/audit.log
+# Describe pod events from audit logs
+kubereplay describe pod my-pod -n default -f /path/to/audit.log
+
+# Describe node events from audit logs
+kubereplay describe node i-0871709ffb35ae35b -g /aws/eks/cluster-name/audit
 ```
 
 ## Installation
 
 ### Prerequisites
-- Go 1.21 or later
+- Go 1.24 or later
 - kubectl installed and configured
 
 ### Build from source
