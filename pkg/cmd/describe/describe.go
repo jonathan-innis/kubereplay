@@ -18,6 +18,11 @@ var Cmd = &cobra.Command{
 
 Supported resources:
   pod    Describe events for a specific pod
+  node   Describe events for a specific node
+
+Additional Flags:
+  --start        Duration value from the current time to start querying the audit logs
+  --end          Duration value from the current time to finish querying the audit logs
 
 Data sources:
   --audit-log    Local audit log file path
@@ -33,7 +38,7 @@ Examples:
   kubereplay describe pod my-pod -n default -g /aws/eks/my-cluster/audit -r us-west-2`,
 }
 
-func RunDescribe(ctx context.Context, cmd *cobra.Command, start, end time.Duration, name, namespace, auditLogPath, logGroup, region string) error {
+func RunDescribe(ctx context.Context, cmd *cobra.Command, startTime, endTime time.Time, name, namespace, auditLogPath, logGroup, region string) error {
 	nn := types.NamespacedName{Namespace: namespace, Name: name}
 
 	var err error
@@ -50,7 +55,7 @@ func RunDescribe(ctx context.Context, cmd *cobra.Command, start, end time.Durati
 			return fmt.Errorf("initializing file provider, %w", err)
 		}
 	}
-	auditEvents, err := auditProvider.GetEvents(ctx, object.NewObjectParserFrom(cmd.Name()), cmd.Parent().Name(), start, end, nn)
+	auditEvents, err := auditProvider.GetEvents(ctx, object.NewObjectParserFrom(cmd.Name()), cmd.Parent().Name(), startTime, endTime, nn)
 	if err != nil {
 		return fmt.Errorf("parsing events, %w", err)
 	}

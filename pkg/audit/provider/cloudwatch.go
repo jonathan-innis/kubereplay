@@ -35,11 +35,11 @@ func NewCloudWatch(logGroupName, region string) (*CloudWatch, error) {
 	}, nil
 }
 
-func (c *CloudWatch) Query(ctx context.Context, query string, start, end time.Time) (cloudwatchlogs.GetQueryResultsOutput, error) {
+func (c *CloudWatch) Query(ctx context.Context, query string, startTime, endTime time.Time) (cloudwatchlogs.GetQueryResultsOutput, error) {
 	startQuery, err := c.client.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
 		QueryString:         lo.ToPtr(query),
-		StartTime:           lo.ToPtr(start.Unix()),
-		EndTime:             lo.ToPtr(end.Unix()),
+		StartTime:           lo.ToPtr(startTime.Unix()),
+		EndTime:             lo.ToPtr(endTime.Unix()),
 		LogGroupIdentifiers: []string{c.logGroupName},
 	})
 	if err != nil {
@@ -61,10 +61,7 @@ func (c *CloudWatch) Query(ctx context.Context, query string, start, end time.Ti
 	return *result, nil
 }
 
-func (c *CloudWatch) GetEvents(ctx context.Context, parser object.ObjectParser, cmdType string, start, end time.Duration, nn types.NamespacedName) ([]auditmodel.Event, error) {
-	startTime := time.Now().Add(-start)
-	endTime := time.Now().Add(-end)
-
+func (c *CloudWatch) GetEvents(ctx context.Context, parser object.ObjectParser, cmdType string, startTime, endTime time.Time, nn types.NamespacedName) ([]auditmodel.Event, error) {
 	var query string
 	switch cmdType {
 	case "get":

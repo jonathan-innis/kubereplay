@@ -10,5 +10,5 @@ import (
 )
 
 type Provider interface {
-	GetEvents(ctx context.Context, parser object.ObjectParser, cmdType string, start, end time.Duration, nn types.NamespacedName) ([]auditmodel.Event, error)
+	GetEvents(ctx context.Context, parser object.ObjectParser, cmdType string, start, end time.Time, nn types.NamespacedName) ([]auditmodel.Event, error)
 }

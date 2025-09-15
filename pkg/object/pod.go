@@ -3,12 +3,12 @@ package object
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	auditmodel "github.com/joinnis/kubereplay/pkg/audit/model"
 	"github.com/samber/lo"
-	lop "github.com/samber/lo/parallel"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,19 +17,21 @@ import (
 
 const (
 	EventTypePodCreated = "PodCreated"
+	EventTypePodUpdated = "PodUpdated"
 	EventTypePodBound   = "PodBound"
 	EventTypePodEvicted = "PodEvicted"
 	EventTypePodDeleted = "PodDeleted"
 )
 
 type Pod struct {
-	Pod           *v1.Pod
-	NamespaceName types.NamespacedName
-	NodeName      string
-	CreationTime  time.Time
-	BindTime      time.Time
-	EvictionTime  time.Time
-	DeletionTime  time.Time
+	Pod             *v1.Pod
+	NamespaceName   types.NamespacedName
+	NodeName        string
+	CreationTime    time.Time
+	LastUpdatedTime time.Time
+	BindTime        time.Time
+	EvictionTime    time.Time
+	DeletionTime    time.Time
 }
 
 func (p Pod) Describe() string {
@@ -39,6 +41,7 @@ func (p Pod) Describe() string {
 NodeName: %s
 
 CreationTime: %s
+LastUpdatedTime: %s
 BindTime: %s
 EvictionTime: %s
 DeletionTime: %s
@@ -51,6 +54,7 @@ Nominations
 		strings.Repeat("-", len(p.NamespaceName.String())),
 		lo.Ternary(p.NodeName == "", "N/A", p.NodeName),
 		lo.Ternary(p.CreationTime.IsZero(), "N/A", p.CreationTime.UTC().Format(time.RFC3339)),
+		lo.Ternary(p.LastUpdatedTime.IsZero(), "N/A", p.CreationTime.UTC().Format(time.RFC3339)),
 		lo.Ternary(p.BindTime.IsZero(), "N/A", p.BindTime.UTC().Format(time.RFC3339)),
 		lo.Ternary(p.EvictionTime.IsZero(), "N/A", p.EvictionTime.UTC().Format(time.RFC3339)),
 		lo.Ternary(p.DeletionTime.IsZero(), "N/A", p.DeletionTime.UTC().Format(time.RFC3339)),
@@ -66,16 +70,22 @@ type PodParser struct{}
 
 func (PodParser) Coalesce(nn types.NamespacedName, events []ParsedEvent) Object {
 	p := Pod{NamespaceName: nn}
-	lop.ForEach(events, func(e ParsedEvent, _ int) {
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
+	for _, e := range events {
 		if e.ObjectType != ObjectTypePod {
-			return
+			continue
 		}
 		if e.NamespaceName.String() != nn.String() {
-			return
+			continue
 		}
 		switch e.Event {
 		case EventTypePodCreated:
 			p.CreationTime = e.Timestamp
+			p.Pod = e.Object.(*v1.Pod)
+		case EventTypePodUpdated:
+			p.LastUpdatedTime = e.Timestamp
 			p.Pod = e.Object.(*v1.Pod)
 		case EventTypePodBound:
 			p.BindTime = e.Timestamp
@@ -85,7 +95,7 @@ func (PodParser) Coalesce(nn types.NamespacedName, events []ParsedEvent) Object 
 		case EventTypePodDeleted:
 			p.DeletionTime = e.Timestamp
 		}
-	})
+	}
 	return p
 }
 
@@ -95,6 +105,7 @@ func (PodParser) Extract(event auditmodel.Event) ParsedEvent {
 		ObjectType:           ObjectTypePod,
 		AdditionalProperties: map[string]string{},
 	}
+	var p v1.Pod
 	switch {
 	case event.Verb == "create" && strings.Contains(event.RequestURI, "binding"):
 		pe.Event = EventTypePodBound
@@ -105,7 +116,12 @@ func (PodParser) Extract(event auditmodel.Event) ParsedEvent {
 		pe.NamespaceName = types.NamespacedName{Namespace: event.ObjectRef.Namespace, Name: event.ObjectRef.Name}
 	case event.Verb == "create":
 		pe.Event = EventTypePodCreated
-		var p v1.Pod
+		lo.Must0(json.Unmarshal(lo.Must(json.Marshal(event.ResponseObject)), &p))
+		p.ManagedFields = nil
+		pe.Object = &p
+		pe.NamespaceName = client.ObjectKeyFromObject(&p)
+	case event.Verb == "update":
+		pe.Event = EventTypePodUpdated
 		lo.Must0(json.Unmarshal(lo.Must(json.Marshal(event.ResponseObject)), &p))
 		p.ManagedFields = nil
 		pe.Object = &p

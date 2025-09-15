@@ -52,8 +52,10 @@ Output includes timestamps, event types, descriptions, and node information wher
 			fmt.Println("Error: Cannot specify both --audit-log and --log-group")
 			return
 		}
+		startTime := time.Now().Add(-start)
+		endTime := time.Now().Add(-end)
 
-		if err := RunDescribe(ctx, cmd, start, end, podName, namespace, auditLogPath, logGroup, region); err != nil {
+		if err := RunDescribe(ctx, cmd, startTime, endTime, podName, namespace, auditLogPath, logGroup, region); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 	},

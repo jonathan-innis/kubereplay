@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -35,6 +36,7 @@ Output includes timestamps, event types, descriptions, and node information wher
 		region, _ := cmd.Flags().GetString("region")
 		start, _ := cmd.Flags().GetDuration("start")
 		end, _ := cmd.Flags().GetDuration("end")
+		at, _ := cmd.Flags().GetString("at")
 
 		if auditLogPath == "" && logGroup == "" {
 			fmt.Println("Error: Either --audit-log or --log-group must be specified")
@@ -45,8 +47,13 @@ Output includes timestamps, event types, descriptions, and node information wher
 			fmt.Println("Error: Cannot specify both --audit-log and --log-group")
 			return
 		}
+		startTime := time.Now().Add(-start)
+		endTime := time.Now().Add(-end)
+		if at != "" {
+			endTime = lo.Must(time.Parse(time.RFC3339, at))
+		}
 
-		if err := RunGet(ctx, cmd, start, end, types.NamespacedName{Name: name}, auditLogPath, logGroup, region); err != nil {
+		if err := RunGet(ctx, cmd, startTime, endTime, types.NamespacedName{Name: name}, auditLogPath, logGroup, region); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 	},
@@ -59,4 +66,5 @@ func init() {
 	nodeCmd.Flags().StringP("region", "r", "", "AWS region for CloudWatch log group")
 	nodeCmd.Flags().DurationP("start", "", time.Hour*24, "Start time for log parsing in time.Duration string format")
 	nodeCmd.Flags().DurationP("end", "", 0, "End time for log parsing in time.Duration string format")
+	nodeCmd.Flags().StringP("at", "", "", "Time to query the object state")
 }

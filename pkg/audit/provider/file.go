@@ -24,7 +24,7 @@ func NewFile(logPath string) (*File, error) {
 	return &File{logPath: logPath}, nil
 }
 
-func (f *File) GetEvents(_ context.Context, _ object.ObjectParser, _ string, _, _ time.Duration, _ types.NamespacedName) ([]auditmodel.Event, error) {
+func (f *File) GetEvents(_ context.Context, _ object.ObjectParser, _ string, _, _ time.Time, _ types.NamespacedName) ([]auditmodel.Event, error) {
 	file, err := os.Open(f.logPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log: %w", err)
