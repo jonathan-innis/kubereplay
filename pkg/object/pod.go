@@ -1,4 +1,4 @@
-package parser
+package object
 
 import (
 	"encoding/json"
@@ -6,12 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joinnis/kubereplay/pkg/audit"
+	auditmodel "github.com/joinnis/kubereplay/pkg/audit/model"
 	"github.com/samber/lo"
 	lop "github.com/samber/lo/parallel"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -21,7 +22,8 @@ const (
 	EventTypePodDeleted = "PodDeleted"
 )
 
-type PodEvent struct {
+type Pod struct {
+	Pod           *v1.Pod
 	NamespaceName types.NamespacedName
 	NodeName      string
 	CreationTime  time.Time
@@ -30,7 +32,7 @@ type PodEvent struct {
 	DeletionTime  time.Time
 }
 
-func (e PodEvent) String() string {
+func (e Pod) Describe() string {
 	return fmt.Sprintf(`
 %s
 %s
@@ -56,10 +58,14 @@ Nominations
 	)
 }
 
-type Pod struct{}
+func (e Pod) Get() string {
+	return string(lo.Must(yaml.Marshal(e.Pod)))
+}
 
-func (Pod) Parse(nn types.NamespacedName, events []ParsedEvent) interface{} {
-	pei := PodEvent{NamespaceName: nn}
+type PodParser struct{}
+
+func (PodParser) Coalesce(nn types.NamespacedName, events []ParsedEvent) Object {
+	pd := Pod{NamespaceName: nn}
 	lop.ForEach(events, func(e ParsedEvent, _ int) {
 		if e.ObjectType != ObjectTypePod {
 			return
@@ -69,20 +75,21 @@ func (Pod) Parse(nn types.NamespacedName, events []ParsedEvent) interface{} {
 		}
 		switch e.Event {
 		case EventTypePodCreated:
-			pei.CreationTime = e.Timestamp
+			pd.CreationTime = e.Timestamp
+			pd.Pod = e.Object.(*v1.Pod)
 		case EventTypePodBound:
-			pei.BindTime = e.Timestamp
-			pei.NodeName = e.AdditionalProperties["NodeName"]
+			pd.BindTime = e.Timestamp
+			pd.NodeName = e.AdditionalProperties["NodeName"]
 		case EventTypePodEvicted:
-			pei.EvictionTime = e.Timestamp
+			pd.EvictionTime = e.Timestamp
 		case EventTypePodDeleted:
-			pei.DeletionTime = e.Timestamp
+			pd.DeletionTime = e.Timestamp
 		}
 	})
-	return pei
+	return pd
 }
 
-func (Pod) Extract(event audit.Event) ParsedEvent {
+func (PodParser) Extract(event auditmodel.Event) ParsedEvent {
 	pe := ParsedEvent{
 		Timestamp:            event.RequestReceivedTimestamp.Time,
 		ObjectType:           ObjectTypePod,
@@ -100,6 +107,7 @@ func (Pod) Extract(event audit.Event) ParsedEvent {
 		pe.Event = EventTypePodCreated
 		var p v1.Pod
 		lo.Must0(json.Unmarshal(lo.Must(json.Marshal(event.ResponseObject)), &p))
+		p.ManagedFields = nil
 		pe.Object = &p
 		pe.NamespaceName = client.ObjectKeyFromObject(&p)
 	case event.Verb == "delete":
@@ -109,4 +117,28 @@ func (Pod) Extract(event audit.Event) ParsedEvent {
 		return ParsedEvent{}
 	}
 	return pe
+}
+
+func (e PodParser) DescribeQuery(nn types.NamespacedName) string {
+	podQueryTemplate := `
+fields @timestamp, @message
+| filter @logStream like "apiserver"
+| filter verb like /create|delete/
+| filter requestURI like "pods"
+| filter @message like "%s"
+| filter requestURI like "%s"
+`
+	return fmt.Sprintf(podQueryTemplate, nn.Name, nn.Namespace)
+}
+
+func (e PodParser) GetQuery(nn types.NamespacedName) string {
+	podQueryTemplate := `
+fields @timestamp, @message
+| filter @logStream like "apiserver"
+| filter verb like /create|delete/
+| filter requestURI like "pods"
+| filter @message like "%s"
+| filter requestURI like "%s"
+`
+	return fmt.Sprintf(podQueryTemplate, nn.Name, nn.Namespace)
 }

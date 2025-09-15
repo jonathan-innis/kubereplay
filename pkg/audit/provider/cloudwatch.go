@@ -1,4 +1,4 @@
-package audit
+package provider
 
 import (
 	"context"
@@ -9,16 +9,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cloudwatchlogstypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	auditmodel "github.com/joinnis/kubereplay/pkg/audit/model"
+	"github.com/joinnis/kubereplay/pkg/object"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/types"
 )
 
-type CloudWatchProvider struct {
+type CloudWatch struct {
 	client       *cloudwatchlogs.Client
 	logGroupName string
 }
 
-func NewCloudWatchProvider(logGroupName, region string) (*CloudWatchProvider, error) {
+func NewCloudWatch(logGroupName, region string) (*CloudWatch, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
@@ -27,25 +29,25 @@ func NewCloudWatchProvider(logGroupName, region string) (*CloudWatchProvider, er
 		cfg.Region = region
 	}
 
-	return &CloudWatchProvider{
+	return &CloudWatch{
 		client:       cloudwatchlogs.NewFromConfig(cfg),
 		logGroupName: logGroupName,
 	}, nil
 }
 
-func (p *CloudWatchProvider) Query(ctx context.Context, query string, start, end time.Time) (cloudwatchlogs.GetQueryResultsOutput, error) {
-	startQuery, err := p.client.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
+func (c *CloudWatch) Query(ctx context.Context, query string, start, end time.Time) (cloudwatchlogs.GetQueryResultsOutput, error) {
+	startQuery, err := c.client.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
 		QueryString:         lo.ToPtr(query),
 		StartTime:           lo.ToPtr(start.Unix()),
 		EndTime:             lo.ToPtr(end.Unix()),
-		LogGroupIdentifiers: []string{p.logGroupName},
+		LogGroupIdentifiers: []string{c.logGroupName},
 	})
 	if err != nil {
 		return cloudwatchlogs.GetQueryResultsOutput{}, err
 	}
 	var result *cloudwatchlogs.GetQueryResultsOutput
 	lo.WaitFor(func(_ int) bool {
-		result, err = p.client.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{
+		result, err = c.client.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{
 			QueryId: startQuery.QueryId,
 		})
 		if err != nil {
@@ -59,41 +61,33 @@ func (p *CloudWatchProvider) Query(ctx context.Context, query string, start, end
 	return *result, nil
 }
 
-func (p *CloudWatchProvider) GetEvents(ctx context.Context, start, end time.Duration, nn types.NamespacedName) ([]Event, error) {
+func (c *CloudWatch) GetEvents(ctx context.Context, parser object.ObjectParser, cmdType string, start, end time.Duration, nn types.NamespacedName) ([]auditmodel.Event, error) {
 	startTime := time.Now().Add(-start)
 	endTime := time.Now().Add(-end)
 
-	res, err := p.Query(ctx, GetPodQuery(nn), startTime, endTime)
+	var query string
+	switch cmdType {
+	case "get":
+		query = parser.GetQuery(nn)
+	case "describe":
+		query = parser.DescribeQuery(nn)
+	default:
+		panic(fmt.Sprintf("invalid command type: %s", cmdType))
+	}
+
+	res, err := c.Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
-	var auditEvents []Event
+	var auditEvents []auditmodel.Event
 	for _, r := range res.Results {
 		for _, field := range r {
 			if *field.Field == "@message" {
-				var auditEvent Event
+				var auditEvent auditmodel.Event
 				lo.Must0(json.Unmarshal([]byte(*field.Value), &auditEvent))
 				auditEvents = append(auditEvents, auditEvent)
 			}
 		}
 	}
 	return auditEvents, nil
-}
-
-type PodQueryResult struct {
-	Timestamp  time.Time
-	RequestURI string
-	Verb       string
-}
-
-func GetPodQuery(nn types.NamespacedName) string {
-	const podQueryTemplate = `
-fields @timestamp, @message
-| filter @logStream like "apiserver"
-| filter verb like /create|delete/
-| filter requestURI like "pods"
-| filter @message like "%s"
-| filter requestURI like "%s"
-`
-	return fmt.Sprintf(podQueryTemplate, nn.Name, nn.Namespace)
 }

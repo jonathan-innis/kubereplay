@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"github.com/joinnis/kubereplay/pkg/cmd/describe"
+	"github.com/joinnis/kubereplay/pkg/cmd/get"
 	"github.com/spf13/cobra"
 )
 
@@ -25,5 +27,6 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.AddCommand(getCmd)
+	rootCmd.AddCommand(describe.Cmd)
+	rootCmd.AddCommand(get.Cmd)
 }

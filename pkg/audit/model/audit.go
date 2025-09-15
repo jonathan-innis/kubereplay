@@ -1,16 +1,8 @@
 package audit
 
 import (
-	"context"
-	"time"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
-
-type Provider interface {
-	GetEvents(context.Context, time.Duration, time.Duration, types.NamespacedName) ([]Event, error)
-}
 
 type Event struct {
 	Kind                     string                 `json:"kind"`
